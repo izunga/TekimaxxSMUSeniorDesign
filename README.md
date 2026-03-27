@@ -1,4 +1,4 @@
-# Ledger Engine
+# Tekimaxx SMU Senior Design — Ledger Engine
 
 Backend ledger service with WorkOS AuthKit authentication, PostgreSQL storage, and tenant-safe accounting operations.
 
@@ -11,7 +11,7 @@ Backend ledger service with WorkOS AuthKit authentication, PostgreSQL storage, a
 
 ## Auth flow (end-to-end)
 
-This service now supports full login flow:
+This service supports a full login flow:
 
 1. Client hits `GET /auth/login`.
 2. Backend redirects to WorkOS authorize endpoint with state.
@@ -73,3 +73,5 @@ Health check:
 - `WORKOS_CLIENT_ID` should be `client_...` (not `pk_...`).
 - Startup logs print auth config warnings to make misconfiguration easier to spot.
 - Session cookie is signed with `SESSION_COOKIE_SECRET`; use a strong secret in non-dev environments.
+
+Repository: [https://github.com/izunga/TekimaxxSMUSeniorDesign](https://github.com/izunga/TekimaxxSMUSeniorDesign)
