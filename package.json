@@ -1,0 +1,29 @@
+{
+  "name": "tekimax-stripe-webhooks",
+  "version": "1.0.0",
+  "description": "Stripe webhook ingestion module for a financial platform — idempotent event pipeline with ledger posting",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts"
+  },
+  "keywords": [
+    "stripe",
+    "webhooks",
+    "ledger",
+    "typescript"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "stripe": "^20.4.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.4.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}
