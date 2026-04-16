@@ -1,0 +1,54 @@
+version: '3.9'
+
+services:
+
+  api-gateway:
+    build: ./api-gateway
+    ports:
+      - "8000:8000"
+    networks:
+      - backend
+
+  webhook-handler:
+    build: ./webhook-handler
+    ports:
+      - "8001:8001"
+    networks:
+      - backend
+
+  ledger-engine:
+    build: ./ledger-engine
+    networks:
+      - backend
+
+  forecast-service:
+    build: ./forecast-service
+    networks:
+      - backend
+
+  llm-service:
+    build: ./llm-service
+    networks:
+      - backend
+
+  rust-crypto:
+    build: ./rust-crypto
+    networks:
+      - backend
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: ledger
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - backend
+
+networks:
+  backend:
+
+volumes:
+  pgdata:
