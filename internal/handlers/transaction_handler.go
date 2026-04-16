@@ -17,8 +17,8 @@ import (
 )
 
 type Handler struct {
-	DB           *sql.DB
-	Ledger       *ledger.Service
+	DB     *sql.DB
+	Ledger *ledger.Service
 	// AuthProvider handles WorkOS login, callback exchange, and cookie sessions.
 	AuthProvider *auth.WorkOSAuth
 }
@@ -221,6 +221,8 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(user)
 }
+
+// test commit
 
 func (h *Handler) AuthLogin(w http.ResponseWriter, r *http.Request) {
 	// Start OAuth flow: set state cookie and redirect user to WorkOS.
