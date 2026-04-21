@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/joho/godotenv"
+
 	"github.com/go-chi/chi/v5"
 
 	"github.com/your-org/ledger-engine/internal/auth"
@@ -19,6 +21,13 @@ import (
 )
 
 func main() {
+
+	if err := godotenv.Load(); err != nil {
+		if err := godotenv.Load("../../.env"); err != nil {
+			log.Println("No .env file found")
+		}
+	}
+	// rest of your main function
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
