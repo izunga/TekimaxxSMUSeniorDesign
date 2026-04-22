@@ -25,7 +25,7 @@ const userContextKey contextKey = "authenticated_user"
 
 type WorkOSAuth struct {
 	// HTTPClient is shared for outbound calls to WorkOS APIs.
-	HTTPClient        *http.Client
+	HTTPClient *http.Client
 	// Endpoint and credential configuration, loaded from env in NewWorkOSAuth().
 	UserInfoURL       string
 	AuthorizeURL      string
@@ -96,6 +96,16 @@ func NewWorkOSAuth() *WorkOSAuth {
 		PostLoginRedirect: postLoginRedirect,
 		CookieSecret:      []byte(cookieSecret),
 	}
+}
+
+func (w *WorkOSAuth) FetchSession(sessionID string) (string, string, error) {
+	// For now (MVP), fake it so your flow works
+
+	// In real implementation, you'd call WorkOS API:
+	// https://api.workos.com/user_management/sessions/{id}
+
+	// TEMP: return dummy user
+	return sessionID, "test@example.com", nil
 }
 
 func (a *WorkOSAuth) ConfigWarnings() []string {
