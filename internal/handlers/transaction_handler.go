@@ -4,7 +4,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log"
 	"net/http"
+	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -17,8 +21,8 @@ import (
 )
 
 type Handler struct {
-	DB           *sql.DB
-	Ledger       *ledger.Service
+	DB     *sql.DB
+	Ledger *ledger.Service
 	// AuthProvider handles WorkOS login, callback exchange, and cookie sessions.
 	AuthProvider *auth.WorkOSAuth
 }
@@ -222,90 +226,63 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(user)
 }
 
+// test commit
+
 func (h *Handler) AuthLogin(w http.ResponseWriter, r *http.Request) {
-	// Start OAuth flow: set state cookie and redirect user to WorkOS.
-	if h.AuthProvider == nil || !h.AuthProvider.IsConfigured() {
-		http.Error(w, "auth provider is not configured", http.StatusInternalServerError)
+	domain := os.Getenv("WORKOS_AUTHKIT_DOMAIN")
+	clientID := os.Getenv("WORKOS_CLIENT_ID")
+	redirectURI := os.Getenv("WORKOS_REDIRECT_URI")
+
+	if domain == "" || clientID == "" || redirectURI == "" {
+		http.Error(w, "Missing WorkOS config", http.StatusInternalServerError)
 		return
 	}
 
-	state, err := h.AuthProvider.NewRandomState()
-	if err != nil {
-		http.Error(w, "failed to generate auth state", http.StatusInternalServerError)
-		return
-	}
+	authURL := fmt.Sprintf(
+		"https://%s/?client_id=%s&redirect_uri=%s",
+		domain,
+		clientID,
+		url.QueryEscape(redirectURI),
+	)
 
-	loginURL, err := h.AuthProvider.BuildAuthorizeURL(state)
-	if err != nil {
-		http.Error(w, "failed to create login url", http.StatusInternalServerError)
-		return
-	}
-
-	http.SetCookie(w, &http.Cookie{
-		Name:     "oauth_state",
-		Value:    state,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   r.TLS != nil,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   300,
-	})
-
-	http.Redirect(w, r, loginURL, http.StatusFound)
+	http.Redirect(w, r, authURL, http.StatusTemporaryRedirect)
 }
 
 func (h *Handler) AuthCallback(w http.ResponseWriter, r *http.Request) {
-	// Complete OAuth flow: validate state, exchange code, mint session cookie.
-	if h.AuthProvider == nil || !h.AuthProvider.IsConfigured() {
-		http.Error(w, "auth provider is not configured", http.StatusInternalServerError)
+	log.Println("🔥 HIT AUTH CALLBACK")
+
+	sessionID := r.URL.Query().Get("session")
+	if sessionID == "" {
+		log.Println("❌ missing session")
+		http.Error(w, "missing session", http.StatusBadRequest)
 		return
 	}
 
-	code := r.URL.Query().Get("code")
-	state := r.URL.Query().Get("state")
-	if code == "" || state == "" {
-		http.Error(w, "missing code or state", http.StatusBadRequest)
-		return
-	}
-
-	stateCookie, err := r.Cookie("oauth_state")
-	if err != nil || stateCookie.Value == "" || stateCookie.Value != state {
-		http.Error(w, "invalid auth state", http.StatusUnauthorized)
-		return
-	}
-
-	token, err := h.AuthProvider.ExchangeCode(r.Context(), code)
+	userID, email, err := h.AuthProvider.FetchSession(sessionID)
+	log.Println("User email:", email)
 	if err != nil {
-		http.Error(w, "failed to exchange auth code", http.StatusUnauthorized)
+		log.Printf("❌ FetchSession error: %v", err)
+		http.Error(w, "could not fetch user session", http.StatusUnauthorized)
 		return
 	}
 
-	sessionValue, err := h.AuthProvider.EncodeSession(token, 24*time.Hour)
+	sessionCookie, err := h.AuthProvider.EncodeSession(userID, 24*time.Hour)
 	if err != nil {
-		http.Error(w, "failed to create session", http.StatusInternalServerError)
+		http.Error(w, "could not generate session cookie", http.StatusInternalServerError)
 		return
 	}
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     "session",
-		Value:    sessionValue,
+		Value:    sessionCookie,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   r.TLS != nil,
+		Secure:   false,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   86400,
 	})
-	http.SetCookie(w, &http.Cookie{
-		Name:     "oauth_state",
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   r.TLS != nil,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   -1,
-	})
 
-	http.Redirect(w, r, h.AuthProvider.PostLoginRedirect, http.StatusFound)
+	http.Redirect(w, r, "/", http.StatusFound)
 }
 
 func (h *Handler) AuthLogout(w http.ResponseWriter, r *http.Request) {
