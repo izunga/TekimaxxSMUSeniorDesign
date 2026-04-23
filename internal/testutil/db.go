@@ -3,12 +3,16 @@ package testutil
 import (
 	"context"
 	"database/sql"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -25,10 +29,15 @@ func NewTestDB(t *testing.T) *sql.DB {
 		t.Skip("TEST_DATABASE_URL or DATABASE_URL must be set for DB tests")
 	}
 
-	db, err := sql.Open("pgx", dsn)
+	testDSN, cleanup := createIsolatedTestSchema(t, dsn)
+	db, err := sql.Open("pgx", testDSN)
 	if err != nil {
 		t.Fatalf("open postgres: %v", err)
 	}
+	t.Cleanup(func() {
+		_ = db.Close()
+		cleanup()
+	})
 
 	db.SetMaxOpenConns(5)
 	db.SetMaxIdleConns(5)
@@ -47,6 +56,37 @@ func NewTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
+func createIsolatedTestSchema(t *testing.T, dsn string) (string, func()) {
+	t.Helper()
+
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatalf("parse DSN: %v", err)
+	}
+
+	adminDB, err := sql.Open("pgx", parsed.String())
+	if err != nil {
+		t.Fatalf("open postgres: %v", err)
+	}
+
+	schemaName := "test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	if _, err := adminDB.Exec(`CREATE SCHEMA ` + schemaName); err != nil {
+		_ = adminDB.Close()
+		t.Fatalf("create test schema: %v", err)
+	}
+
+	query := parsed.Query()
+	query.Set("search_path", schemaName+",public")
+	parsed.RawQuery = query.Encode()
+
+	cleanup := func() {
+		_, _ = adminDB.Exec(`DROP SCHEMA IF EXISTS ` + schemaName + ` CASCADE`)
+		_ = adminDB.Close()
+	}
+
+	return parsed.String(), cleanup
+}
+
 func runMigrations(t *testing.T, db *sql.DB) {
 	t.Helper()
 
@@ -57,17 +97,22 @@ func runMigrations(t *testing.T, db *sql.DB) {
 
 	// Project root is three levels up: internal/testutil/db.go -> internal -> project root.
 	root := filepath.Clean(filepath.Join(filepath.Dir(filename), "..", ".."))
-	migrationPath := filepath.Join(root, "migrations", "001_init.sql")
-
-	sqlBytes, err := os.ReadFile(migrationPath)
-	if err != nil {
-		t.Fatalf("read migration: %v", err)
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if _, err := db.ExecContext(ctx, string(sqlBytes)); err != nil {
-		t.Fatalf("apply migration: %v", err)
+	matches, err := filepath.Glob(filepath.Join(root, "migrations", "*.sql"))
+	if err != nil {
+		t.Fatalf("glob migrations: %v", err)
+	}
+	sort.Strings(matches)
+
+	for _, migrationPath := range matches {
+		sqlBytes, err := os.ReadFile(migrationPath)
+		if err != nil {
+			t.Fatalf("read migration %s: %v", filepath.Base(migrationPath), err)
+		}
+		if _, err := db.ExecContext(ctx, string(sqlBytes)); err != nil {
+			t.Fatalf("apply migration %s: %v", filepath.Base(migrationPath), err)
+		}
 	}
 }

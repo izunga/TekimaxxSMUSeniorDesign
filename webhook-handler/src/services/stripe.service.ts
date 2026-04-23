@@ -9,12 +9,19 @@
 import Stripe from "stripe";
 import { config } from "../config";
 
-// Create a single Stripe client instance that's shared across
-// the whole app. It's configured with our secret key from the
-// environment variables.
-export const stripe = new Stripe(config.stripe.secretKey, {
-  apiVersion: "2026-02-25.clover",
-});
+let stripe: Stripe | null = null;
+
+if (config.stripe.secretKey) {
+  // Create a single Stripe client instance that's shared across
+  // the whole app when Stripe is configured for the demo.
+  stripe = new Stripe(config.stripe.secretKey, {
+    apiVersion: "2026-02-25.clover",
+  });
+}
+
+export function isStripeConfigured(): boolean {
+  return Boolean(stripe && config.stripe.webhookSecret);
+}
 
 // ============================================================
 // SIGNATURE VERIFICATION
@@ -41,6 +48,10 @@ export function verifyWebhookSignature(
   rawBody: Buffer,
   signature: string
 ): Stripe.Event {
+  if (!stripe || !config.stripe.webhookSecret) {
+    throw new Error("Stripe is not configured");
+  }
+
   // This Stripe SDK function does all the heavy lifting:
   // it checks the signature, verifies the timestamp isn't too old
   // (to prevent replay attacks), and returns the parsed event

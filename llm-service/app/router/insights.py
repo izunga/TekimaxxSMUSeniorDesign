@@ -7,8 +7,10 @@ from __future__ import annotations
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends
+from fastapi.responses import JSONResponse
 
+from app.auth import require_user_id
 from app.config import Settings, get_settings
 from app.models.requests import InsightsRequest
 from app.models.responses import ErrorResponse, InsightsResponse
@@ -28,15 +30,6 @@ Rules:
 - Never repeat raw numbers beyond what's given.
 - Keep the explanation under 150 words.
 """
-
-
-def _require_user(x_tekimax_user_id: str = Header(..., alias="X-Tekimax-User-Id")) -> str:
-    if not x_tekimax_user_id.strip():
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
-                            detail="Missing authenticated user identity")
-    return x_tekimax_user_id.strip()
-
-
 @router.post(
     "",
     response_model=InsightsResponse,
@@ -46,7 +39,7 @@ def _require_user(x_tekimax_user_id: str = Header(..., alias="X-Tekimax-User-Id"
 )
 async def insights_endpoint(
     body: InsightsRequest,
-    user_id: str = Depends(_require_user),
+    user_id: str = Depends(require_user_id),
     settings: Settings = Depends(get_settings),
 ) -> InsightsResponse:
     request_id = str(uuid.uuid4())
@@ -80,7 +73,13 @@ async def insights_endpoint(
         )
 
     except GuardrailViolation:
-        raise   # global handler → 500
+        return JSONResponse(
+            status_code=500,
+            content=ErrorResponse(
+                error="guardrail_violation",
+                detail="The generated response violated compliance safeguards.",
+            ).model_dump(),
+        )
 
     except (OllamaUnavailableError, OllamaModelError) as exc:
         logger.warning("insights: LLM unavailable (%s)", exc)

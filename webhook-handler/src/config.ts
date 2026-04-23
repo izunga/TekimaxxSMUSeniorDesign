@@ -16,8 +16,10 @@ dotenv.config();
 // "as const" makes TypeScript treat these as literal types,
 // preventing accidental reassignment.
 export const config = {
+  appEnv: (process.env.APP_ENV || "development").toLowerCase(),
   // Which port the Express server listens on (defaults to 3001).
   port: parseInt(process.env.PORT || "3001", 10),
+  stripeMode: (process.env.STRIPE_MODE || "optional").toLowerCase(),
 
   stripe: {
     // The Stripe secret API key (starts with sk_test_ or sk_live_).
@@ -43,16 +45,41 @@ export const config = {
     revenueAccountId: process.env.LEDGER_REVENUE_ACCOUNT_ID || "",
     contraRevenueAccountId: process.env.LEDGER_CONTRA_REVENUE_ACCOUNT_ID || "",
   },
+
+  events: {
+    storePath: process.env.EVENT_STORE_PATH || "",
+  },
+
+  http: {
+    bodyLimit: process.env.HTTP_BODY_LIMIT || "1mb",
+  },
 } as const;
 
-// Called at startup to make sure the required env vars exist.
-// If either is missing, we crash immediately with a clear error
-// rather than failing silently later when a webhook arrives.
+function stripeConfigured(): boolean {
+  return Boolean(config.stripe.secretKey && config.stripe.webhookSecret);
+}
+
 export function validateConfig(): void {
-  if (!config.stripe.secretKey) {
-    throw new Error("STRIPE_SECRET_KEY is required");
+  if (!["production", "staging", "development", "test"].includes(config.appEnv)) {
+    throw new Error("APP_ENV must be one of production, staging, development, test");
   }
-  if (!config.stripe.webhookSecret) {
-    throw new Error("STRIPE_WEBHOOK_SECRET is required");
+  if (!["required", "optional", "disabled"].includes(config.stripeMode)) {
+    throw new Error("STRIPE_MODE must be one of required, optional, disabled");
   }
+
+  if (config.appEnv === "production" && config.stripeMode === "optional") {
+    console.warn("[Config] STRIPE_MODE=optional in production; prefer required or disabled for explicit behavior.");
+  }
+
+  if (config.stripeMode === "required" && !stripeConfigured()) {
+    throw new Error("Stripe is required but STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET are missing");
+  }
+
+  if (config.stripeMode !== "disabled" && !stripeConfigured()) {
+    console.warn("[Config] Stripe is not fully configured. Webhook verification will run in degraded mode.");
+  }
+}
+
+export function isStripeExpected(): boolean {
+  return config.stripeMode !== "disabled";
 }

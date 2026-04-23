@@ -35,6 +35,8 @@ type WorkOSAuth struct {
 	RedirectURI       string
 	PostLoginRedirect string
 	CookieSecret      []byte
+	InternalServiceToken string
+	InternalServiceEmail string
 }
 
 type workOSUserResponse struct {
@@ -95,6 +97,8 @@ func NewWorkOSAuth() *WorkOSAuth {
 		RedirectURI:       os.Getenv("WORKOS_REDIRECT_URI"),
 		PostLoginRedirect: postLoginRedirect,
 		CookieSecret:      []byte(cookieSecret),
+		InternalServiceToken: strings.TrimSpace(os.Getenv("INTERNAL_SERVICE_TOKEN")),
+		InternalServiceEmail: strings.TrimSpace(os.Getenv("INTERNAL_SERVICE_EMAIL")),
 	}
 }
 
@@ -121,6 +125,9 @@ func (a *WorkOSAuth) ConfigWarnings() []string {
 	}
 	if strings.Contains(a.ClientSecret, "|") {
 		warnings = append(warnings, "WORKOS_API_KEY contains '|' - verify key was copied correctly")
+	}
+	if a.InternalServiceToken != "" && a.InternalServiceEmail == "" {
+		warnings = append(warnings, "INTERNAL_SERVICE_EMAIL should be set when INTERNAL_SERVICE_TOKEN is enabled")
 	}
 	return warnings
 }
@@ -290,6 +297,23 @@ func (a *WorkOSAuth) sign(v string) string {
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
+func (a *WorkOSAuth) IsInternalServiceToken(token string) bool {
+	return a.InternalServiceToken != "" && token == a.InternalServiceToken
+}
+
+func (a *WorkOSAuth) ResolveInternalServiceUser(ctx context.Context, db *models.UserModel) (*models.User, error) {
+	email := a.InternalServiceEmail
+	if strings.TrimSpace(email) == "" {
+		email = "service@tekimax.local"
+	}
+
+	user, err := db.GetByEmail(ctx, email)
+	if errors.Is(err, sql.ErrNoRows) {
+		return db.Insert(ctx, email, "active")
+	}
+	return user, err
+}
+
 func UserFromContext(ctx context.Context) (*models.User, bool) {
 	u, ok := ctx.Value(userContextKey).(*models.User)
 	return u, ok
@@ -310,16 +334,27 @@ func Middleware(db *models.UserModel, resolver *WorkOSAuth) func(http.Handler) h
 					token, _ = resolver.DecodeSession(cookie.Value)
 				}
 			}
-			if token == "" {
-				http.Error(w, "missing authentication", http.StatusUnauthorized)
-				return
-			}
+				if token == "" {
+					http.Error(w, "missing authentication", http.StatusUnauthorized)
+					return
+				}
 
-			email, err := resolver.ResolveEmail(r.Context(), token)
-			if err != nil {
-				http.Error(w, "invalid authentication token", http.StatusUnauthorized)
-				return
-			}
+				if resolver.IsInternalServiceToken(token) {
+					user, err := resolver.ResolveInternalServiceUser(r.Context(), db)
+					if err != nil {
+						http.Error(w, "failed to load internal service user", http.StatusInternalServerError)
+						return
+					}
+					ctx := context.WithValue(r.Context(), userContextKey, user)
+					next.ServeHTTP(w, r.WithContext(ctx))
+					return
+				}
+
+				email, err := resolver.ResolveEmail(r.Context(), token)
+				if err != nil {
+					http.Error(w, "invalid authentication token", http.StatusUnauthorized)
+					return
+				}
 
 			user, err := db.GetByEmail(r.Context(), email)
 			if errors.Is(err, sql.ErrNoRows) {

@@ -1,77 +1,135 @@
-version: '3.9'
-
 services:
 
   webhook-handler:
     build: ./webhook-handler
+    restart: unless-stopped
+    init: true
     ports:
       - "3001:3001"
     environment:
       PORT: 3001
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
+      STRIPE_MODE: ${STRIPE_MODE:-optional}
+      APP_ENV: ${APP_ENV:-development}
+      HTTP_BODY_LIMIT: ${HTTP_BODY_LIMIT:-1mb}
       LEDGER_ENGINE_URL: http://ledger-engine:8080
       LEDGER_SERVICE_TOKEN: ${LEDGER_SERVICE_TOKEN:-}
       LEDGER_STRIPE_BALANCE_ACCOUNT_ID: ${LEDGER_STRIPE_BALANCE_ACCOUNT_ID:-}
       LEDGER_REVENUE_ACCOUNT_ID: ${LEDGER_REVENUE_ACCOUNT_ID:-}
       LEDGER_CONTRA_REVENUE_ACCOUNT_ID: ${LEDGER_CONTRA_REVENUE_ACCOUNT_ID:-}
+      EVENT_STORE_PATH: /var/lib/tekimax/stripe-events.json
     networks:
       - backend
     depends_on:
-      - ledger-engine
+      ledger-engine:
+        condition: service_healthy
+    volumes:
+      - webhookdata:/var/lib/tekimax
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
 
   ledger-engine:
     build: .
+    restart: unless-stopped
+    init: true
     ports:
       - "8080:8080"
     environment:
-      DATABASE_URL: postgresql://user:password@postgres:5432/ledger
+      DATABASE_URL: postgresql://user:password@postgres:5432/ledger?sslmode=disable
+      APP_ENV: ${APP_ENV:-development}
       ADDR: :8080
       WORKOS_CLIENT_ID: ${WORKOS_CLIENT_ID}
       WORKOS_API_KEY: ${WORKOS_API_KEY}
       WORKOS_REDIRECT_URI: ${WORKOS_REDIRECT_URI}
       WORKOS_POST_LOGIN_REDIRECT: ${WORKOS_POST_LOGIN_REDIRECT:-/}
       SESSION_COOKIE_SECRET: ${SESSION_COOKIE_SECRET}
+      KMS_KEY_ID: ${KMS_KEY_ID:-env-kms-v1}
+      KMS_MASTER_KEY_B64: ${KMS_MASTER_KEY_B64:-}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-}
+      INTERNAL_SERVICE_EMAIL: ${INTERNAL_SERVICE_EMAIL:-service@tekimax.local}
+      RATE_LIMIT_REQUESTS: ${RATE_LIMIT_REQUESTS:-120}
+      RATE_LIMIT_WINDOW_SECONDS: ${RATE_LIMIT_WINDOW_SECONDS:-60}
     networks:
       - backend
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
 
   forecast-service:
     build: ./forecast-service
+    restart: unless-stopped
+    init: true
     environment:
       DATABASE_URL: postgresql+asyncpg://user:password@postgres:5432/ledger
       USE_MOCK_DATA: ${USE_MOCK_DATA:-false}
+      ALLOW_INSECURE_USER_HEADER: ${ALLOW_INSECURE_USER_HEADER:-true}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-}
       FORECAST_PERIODS: ${FORECAST_PERIODS:-3}
       MOVING_AVG_WINDOW: ${MOVING_AVG_WINDOW:-3}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     networks:
       - backend
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
 
   llm-service:
     build: ./llm-service
+    restart: unless-stopped
+    init: true
     environment:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-granite3.3:8b}
       OLLAMA_TIMEOUT_SECONDS: ${OLLAMA_TIMEOUT_SECONDS:-60}
       FORECAST_SERVICE_URL: http://forecast-service:8001
+      ALLOW_INSECURE_USER_HEADER: ${ALLOW_INSECURE_USER_HEADER:-true}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
       - backend
     depends_on:
-      - forecast-service
+      forecast-service:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
 
   rust-crypto:
     build: ./rust-crypto
+    restart: unless-stopped
+    init: true
+    command: ["sh", "-c", "sleep infinity"]
     networks:
       - backend
+    read_only: true
+    tmpfs:
+      - /tmp
 
   postgres:
     image: postgres:15
+    restart: unless-stopped
     environment:
       POSTGRES_USER: user
       POSTGRES_PASSWORD: password
@@ -83,9 +141,16 @@ services:
       - "5432:5432"
     networks:
       - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-user} -d ${POSTGRES_DB:-ledger}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
 networks:
   backend:
 
 volumes:
   pgdata:
+  webhookdata:

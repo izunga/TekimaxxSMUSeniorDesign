@@ -1,77 +1,129 @@
-# Tekimaxx SMU Senior Design — Ledger Engine
+# Tekimaxx SMU Senior Design
 
-Backend ledger service with WorkOS AuthKit authentication, PostgreSQL storage, and tenant-safe accounting operations.
+Multi-service backend for the Tekimax financial intelligence platform.
 
-## What this project does
+## Services
 
-- Stores `users`, `accounts`, `transactions`, and immutable `journal_entries`.
-- Enforces double-entry accounting rules (balanced debits/credits).
-- Uses WorkOS AuthKit for login and resolves authenticated users into the local `users` table.
-- Protects account and transaction operations so users can only access their own data.
+- `ledger-engine` (Go): user ledger, accounts, transactions, immutable journal entries, GraphQL adapter, audit logs, and PII encryption
+- `webhook-handler` (Node/TypeScript): Stripe webhook ingestion and normalization
+- `forecast-service` (Python/FastAPI): deterministic forecasting and what-if analysis
+- `llm-service` (Python/FastAPI): Granite-powered insights and Gamma Router orchestration
+- `rust-crypto` (Rust): HMAC signing and verification utility for security workflows
 
-## Auth flow (end-to-end)
+## What changed in this completion pass
 
-This service supports a full login flow:
+- added internal service token support for cross-service authentication
+- added Go API rate limiting
+- added a bootstrap route and helper script for demo ledger accounts
+- added durable file-backed Stripe event storage for the webhook service
+- hardened container runtime defaults
+- added envelope-encrypted user PII with a local KMS abstraction
+- added immutable audit logs for core ledger mutations
+- added a minimal GraphQL endpoint for ledger operations
+- added planning, traceability, AI usage, and security scan docs
 
-1. Client hits `GET /auth/login`.
-2. Backend redirects to WorkOS authorize endpoint with state.
-3. WorkOS redirects back to `GET /auth/callback` with `code` and `state`.
-4. Backend exchanges `code` for an access token.
-5. Backend sets signed `session` cookie (HTTP-only).
-6. Protected routes authenticate from either:
-   - `Authorization: Bearer <token>`, or
-   - signed `session` cookie.
+## Quick Start
 
-Useful auth endpoints:
+1. Copy the environment template:
 
+```bash
+cp .env.example .env
+```
+
+If you have an older local Postgres volume from previous project iterations, reset it before the first fresh boot:
+
+```bash
+docker compose down -v
+```
+
+2. Set at least these values in `.env`:
+
+```env
+DATABASE_URL=postgresql://user:password@postgres:5432/ledger?sslmode=disable
+SESSION_COOKIE_SECRET=replace-this-with-a-long-random-secret
+KMS_KEY_ID=env-kms-v1
+KMS_MASTER_KEY_B64=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+INTERNAL_SERVICE_TOKEN=replace-this-with-a-long-random-internal-token
+LEDGER_SERVICE_TOKEN=replace-this-with-the-same-value-as-INTERNAL_SERVICE_TOKEN
+```
+
+3. Start the stack:
+
+```bash
+docker compose build
+docker compose up -d
+```
+
+4. Bootstrap the demo ledger accounts:
+
+```bash
+set -a && source .env && set +a
+./scripts/bootstrap_demo.sh
+```
+
+5. Copy the printed `LEDGER_*_ACCOUNT_ID` exports into your shell or `.env`, then restart the webhook service:
+
+```bash
+docker compose up -d webhook-handler
+```
+
+## Core Endpoints
+
+### Ledger engine
+
+- `GET /healthz`
+- `GET /graphql/schema`
+- `POST /graphql`
 - `GET /auth/login`
 - `GET /auth/callback`
 - `GET /auth/status`
 - `POST /auth/logout`
-- `GET /auth/me` (protected)
+- `GET /auth/me`
+- `POST /accounts`
+- `GET /accounts/{id}/balance`
+- `POST /transactions`
+- `POST /bootstrap/demo`
 
-Local auth test UI:
+### Webhook handler
 
-- `GET /` renders a small console page with Login/Logout/Refresh status buttons.
+- `GET /health`
+- `POST /stripe/webhook`
+- dashboard routes from `webhook-handler/src/controllers/dashboard.controller.ts`
 
-## Required environment variables
+### Forecast service
 
-Create a local `.env` file (already gitignored) with:
+- `GET /health`
+- `POST /forecast`
+- `POST /what-if`
 
-```env
-DATABASE_URL=postgres://<db_user>@localhost:5432/ledger_engine?sslmode=disable
-ADDR=:8080
+### LLM service
 
-WORKOS_CLIENT_ID=client_xxx
-WORKOS_API_KEY=sk_test_xxx
-WORKOS_REDIRECT_URI=http://localhost:8080/auth/callback
-WORKOS_POST_LOGIN_REDIRECT=http://localhost:8080/
-SESSION_COOKIE_SECRET=<long-random-secret>
-```
+- `GET /health`
+- `POST /insights`
+- `POST /analyze`
 
-Optional overrides:
+## Auth Model
 
-```env
-WORKOS_AUTHORIZE_URL=https://api.workos.com/user_management/authorize
-WORKOS_AUTHENTICATE_URL=https://api.workos.com/user_management/authenticate
-WORKOS_USERINFO_URL=https://api.workos.com/user_management/users/me
-```
+- Browser/API auth into the Go ledger uses WorkOS when configured.
+- Internal service-to-service calls can use `Authorization: Bearer $INTERNAL_SERVICE_TOKEN` for the Go service.
+- Python services accept `X-Internal-Service-Token` when `ALLOW_INSECURE_USER_HEADER=false`.
+- For local demo mode, `ALLOW_INSECURE_USER_HEADER=true` permits the existing `X-Tekimax-User-Id` flow.
 
-## Local run
+## Security and Project Docs
 
-```bash
-set -a && source .env && set +a
-go run ./cmd/api
-```
-
-Health check:
-
-- `http://localhost:8080/healthz`
+- [RAID.md](RAID.md)
+- [REQUIREMENTS_TRACEABILITY.md](REQUIREMENTS_TRACEABILITY.md)
+- [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)
+- [AI_USAGE_LOG.md](AI_USAGE_LOG.md)
+- [SECURITY_SCAN.md](SECURITY_SCAN.md)
+- [DEMO_RUNBOOK.md](DEMO_RUNBOOK.md)
+- [TEST_REPORT.md](TEST_REPORT.md)
+- [notebooks/forecast_demo.ipynb](notebooks/forecast_demo.ipynb)
 
 ## Notes
 
-- `WORKOS_CLIENT_ID` should be `client_...` (not `pk_...`).
-- Startup logs print auth config warnings to make misconfiguration easier to spot.
-- Session cookie is signed with `SESSION_COOKIE_SECRET`; use a strong secret in non-dev environments.
-
-Repository: [https://github.com/izunga/TekimaxxSMUSeniorDesign](https://github.com/izunga/TekimaxxSMUSeniorDesign)
+- `WORKOS_CLIENT_ID` should start with `client_`.
+- `webhook-handler` now persists event history to a mounted JSON file by default.
+- `rust-crypto` is now a small utility for HMAC signing and verification, not a placeholder.
+- User email is stored with envelope encryption and a keyed-hash lookup path.
+- The Go service applies SQL migrations on startup for more reliable demo restarts.

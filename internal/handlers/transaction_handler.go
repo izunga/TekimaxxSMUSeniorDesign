@@ -17,6 +17,7 @@ import (
 
 	"github.com/your-org/ledger-engine/internal/auth"
 	"github.com/your-org/ledger-engine/internal/ledger"
+	"github.com/your-org/ledger-engine/internal/middleware"
 	"github.com/your-org/ledger-engine/internal/models"
 )
 
@@ -48,6 +49,7 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	userModel := &models.UserModel{DB: h.DB}
 	user, err := userModel.Insert(ctx, req.Email, req.Status)
 	if err != nil {
+		log.Printf("request_id=%s create_user failed: %v", middleware.GetRequestID(ctx), err)
 		http.Error(w, "failed to create user", http.StatusInternalServerError)
 		return
 	}
@@ -83,6 +85,7 @@ func (h *Handler) CreateAccount(w http.ResponseWriter, r *http.Request) {
 	accountModel := &models.AccountModel{DB: h.DB}
 	account, err := accountModel.Insert(ctx, authUser.ID, req.Name, req.Type)
 	if err != nil {
+		log.Printf("request_id=%s create_account failed: %v", middleware.GetRequestID(ctx), err)
 		http.Error(w, "failed to create account", http.StatusInternalServerError)
 		return
 	}
@@ -148,6 +151,7 @@ func (h *Handler) CreateTransaction(w http.ResponseWriter, r *http.Request) {
 
 	txn, entries, err := h.Ledger.CreateTransaction(ctx, input)
 	if err != nil {
+		log.Printf("request_id=%s create_transaction failed: %v", middleware.GetRequestID(ctx), err)
 		status := http.StatusInternalServerError
 		switch {
 		case errors.Is(err, ledger.ErrInvalidLines),
@@ -226,7 +230,51 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(user)
 }
 
-// test commit
+func (h *Handler) BootstrapDemo(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	authUser, ok := auth.UserFromContext(ctx)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	type accountSeed struct {
+		Name string
+		Type models.AccountType
+		Env  string
+	}
+
+	seeds := []accountSeed{
+		{Name: "Stripe Balance", Type: models.AccountTypeAsset, Env: "LEDGER_STRIPE_BALANCE_ACCOUNT_ID"},
+		{Name: "Revenue", Type: models.AccountTypeRevenue, Env: "LEDGER_REVENUE_ACCOUNT_ID"},
+		{Name: "Contra-Revenue", Type: models.AccountTypeExpense, Env: "LEDGER_CONTRA_REVENUE_ACCOUNT_ID"},
+	}
+
+	accountModel := &models.AccountModel{DB: h.DB}
+	accounts := make(map[string]any, len(seeds))
+	exports := make(map[string]string, len(seeds))
+
+	for _, seed := range seeds {
+		account, err := accountModel.GetByUserAndName(ctx, authUser.ID, seed.Name)
+		if errors.Is(err, sql.ErrNoRows) {
+			account, err = accountModel.Insert(ctx, authUser.ID, seed.Name, seed.Type)
+		}
+		if err != nil {
+			http.Error(w, "failed to bootstrap accounts", http.StatusInternalServerError)
+			return
+		}
+
+		accounts[seed.Name] = account
+		exports[seed.Env] = account.ID.String()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"user":     authUser,
+		"accounts": accounts,
+		"exports":  exports,
+	})
+}
 
 func (h *Handler) AuthLogin(w http.ResponseWriter, r *http.Request) {
 	domain := os.Getenv("WORKOS_AUTHKIT_DOMAIN")
@@ -378,12 +426,20 @@ func (h *Handler) resolveAuthUserOptional(r *http.Request) (*models.User, bool) 
 		return nil, false
 	}
 
+	userModel := &models.UserModel{DB: h.DB}
+	if h.AuthProvider.IsInternalServiceToken(token) {
+		user, err := h.AuthProvider.ResolveInternalServiceUser(r.Context(), userModel)
+		if err != nil {
+			return nil, false
+		}
+		return user, true
+	}
+
 	email, err := h.AuthProvider.ResolveEmail(r.Context(), token)
 	if err != nil {
 		return nil, false
 	}
 
-	userModel := &models.UserModel{DB: h.DB}
 	user, err := userModel.GetByEmail(r.Context(), email)
 	if errors.Is(err, sql.ErrNoRows) {
 		user, err = userModel.Insert(r.Context(), email, "active")

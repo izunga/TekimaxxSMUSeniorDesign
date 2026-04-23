@@ -3,6 +3,7 @@ package ledger
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -108,6 +109,21 @@ func (s *Service) CreateTransaction(ctx context.Context, input CreateTransaction
 			return nil, nil, err
 		}
 		entries = append(entries, entry)
+	}
+
+	metadata, _ := json.Marshal(map[string]any{
+		"source": input.Source,
+		"lines":  len(input.Lines),
+	})
+	auditModel := &models.AuditLogModel{DB: s.DB}
+	if err = auditModel.InsertTx(ctx, tx, &models.AuditLog{
+		UserID:       &input.UserID,
+		Action:       "transaction.created",
+		ResourceType: "transaction",
+		ResourceID:   txn.ID.String(),
+		Metadata:     metadata,
+	}); err != nil {
+		return nil, nil, err
 	}
 
 	if err = tx.Commit(); err != nil {

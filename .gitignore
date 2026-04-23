@@ -5,3 +5,9 @@
 .env
 node_modules
 dist
+.data
+.tekimax-security
+.next
+demo-dashboard/.next
+__pycache__
+*.pyc
