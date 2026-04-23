@@ -311,6 +311,12 @@ func (a *WorkOSAuth) ResolveInternalServiceUser(ctx context.Context, db *models.
 	if errors.Is(err, sql.ErrNoRows) {
 		return db.Insert(ctx, email, "active")
 	}
+	if err != nil {
+		// Local/demo volumes can outlive KMS key changes. The internal service
+		// email is configuration-owned, so safely re-seal that row instead of
+		// blocking demo bootstrap on stale encrypted PII.
+		return db.UpsertServiceUser(ctx, email, "active")
+	}
 	return user, err
 }
 

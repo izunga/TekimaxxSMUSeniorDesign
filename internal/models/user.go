@@ -75,6 +75,39 @@ func (m *UserModel) Insert(ctx context.Context, email, status string) (*User, er
 	}, nil
 }
 
+func (m *UserModel) UpsertServiceUser(ctx context.Context, email, status string) (*User, error) {
+	id := uuid.New()
+
+	sealedEmail, emailHash, keyID, err := security.DefaultPIIProtector().SealEmail(ctx, email)
+	if err != nil {
+		return nil, err
+	}
+
+	const q = `
+		INSERT INTO users (id, email, email_encrypted, email_hash, email_key_id, status)
+		VALUES ($1, NULL, $2, $3, $4, $5)
+		ON CONFLICT (email_hash) WHERE email_hash IS NOT NULL
+		DO UPDATE SET
+		    email = NULL,
+		    email_encrypted = EXCLUDED.email_encrypted,
+		    email_key_id = EXCLUDED.email_key_id,
+		    status = EXCLUDED.status
+		RETURNING id, status, created_at
+	`
+
+	var u User
+	if err := m.DB.QueryRowContext(ctx, q, id, sealedEmail, emailHash, keyID, status).Scan(
+		&u.ID,
+		&u.Status,
+		&u.CreatedAt,
+	); err != nil {
+		return nil, err
+	}
+	u.Email = email
+
+	return &u, nil
+}
+
 func (m *UserModel) GetByID(ctx context.Context, id uuid.UUID) (*User, error) {
 	tx, err := m.DB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
