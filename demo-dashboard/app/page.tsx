@@ -16,7 +16,7 @@ const ENDPOINTS = {
 };
 
 const DEMO_TOKEN = "local-demo-internal-token";
-const DEMO_USER_ID = "demo-user";
+const DEMO_USER_ID_PLACEHOLDER = "resolved from /bootstrap/demo";
 
 type Status = "idle" | "running" | "passed" | "failed";
 type ServiceStatus = "unknown" | "healthy" | "down";
@@ -87,7 +87,7 @@ const TEST_CASES: TestCase[] = [
     title: "Test Case 5 — Forecast Service Test",
     requirement: "Forecast microservice endpoint and validation",
     input: {
-      user_id: DEMO_USER_ID,
+      user_id: DEMO_USER_ID_PLACEHOLDER,
       metric: "revenue",
       start_date: "2025-01-01",
       end_date: "2025-04-30",
@@ -101,7 +101,7 @@ const TEST_CASES: TestCase[] = [
     title: "Test Case 6 — LLM Service Test",
     requirement: "AI advisory service health and request handling",
     input: {
-      user_id: DEMO_USER_ID,
+      user_id: DEMO_USER_ID_PLACEHOLDER,
       question: "Why did cash flow decrease even though revenue increased?",
     },
   },
@@ -161,10 +161,16 @@ function badgeVariant(status: Status) {
   return "secondary";
 }
 
+function extractBootstrappedUserId(response: ApiResult): string | null {
+  const data = response.data as { user?: { id?: unknown } } | undefined;
+  return typeof data?.user?.id === "string" ? data.user.id : null;
+}
+
 export default function DemoDashboard() {
   const size = useWindowSize();
   const [results, setResults] = useState<Record<string, TestResult>>(emptyResults);
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [demoUserId, setDemoUserId] = useState<string | null>(null);
   const [serviceStatuses, setServiceStatuses] = useState<Record<string, ServiceStatus>>({
     ledger: "unknown",
     forecast: "unknown",
@@ -233,6 +239,20 @@ export default function DemoDashboard() {
     return passed;
   };
 
+  const ensureDemoUserId = async () => {
+    if (demoUserId) {
+      return { userId: demoUserId, bootstrap: null as ApiResult | null };
+    }
+
+    const endpoint = `${ENDPOINTS.ledger}/bootstrap/demo`;
+    const bootstrap = await callApi(endpoint, "POST", undefined, { Authorization: `Bearer ${DEMO_TOKEN}` });
+    const userId = extractBootstrappedUserId(bootstrap);
+    if (userId) {
+      setDemoUserId(userId);
+    }
+    return { userId, bootstrap };
+  };
+
   const runTest = async (test: TestCase) => {
     setRunning(test);
 
@@ -244,6 +264,10 @@ export default function DemoDashboard() {
     if (test.id === "bootstrap") {
       const endpoint = `${ENDPOINTS.ledger}/bootstrap/demo`;
       const response = await callApi(endpoint, "POST", undefined, { Authorization: `Bearer ${DEMO_TOKEN}` });
+      const userId = extractBootstrappedUserId(response);
+      if (userId) {
+        setDemoUserId(userId);
+      }
       record(test, endpoint, test.input, response, response.ok);
       return;
     }
@@ -264,22 +288,36 @@ export default function DemoDashboard() {
     }
 
     if (test.id === "forecast") {
+      const { userId, bootstrap } = await ensureDemoUserId();
+      if (!userId) {
+        record(test, `${ENDPOINTS.ledger}/bootstrap/demo`, test.input, { bootstrap }, false);
+        return;
+      }
+
       const endpoint = `${ENDPOINTS.forecast}/forecast`;
-      const response = await callApi(endpoint, "POST", test.input, {
-        "X-Tekimax-User-Id": DEMO_USER_ID,
+      const request = { ...(test.input as Record<string, unknown>), user_id: userId };
+      const response = await callApi(endpoint, "POST", request, {
+        "X-Tekimax-User-Id": userId,
         "X-Internal-Service-Token": DEMO_TOKEN,
       });
-      record(test, endpoint, test.input, response, response.ok);
+      record(test, endpoint, { bootstrap, forecast: request }, response, response.ok);
       return;
     }
 
     if (test.id === "llm") {
+      const { userId, bootstrap } = await ensureDemoUserId();
+      if (!userId) {
+        record(test, `${ENDPOINTS.ledger}/bootstrap/demo`, test.input, { bootstrap }, false);
+        return;
+      }
+
       const endpoint = `${ENDPOINTS.llm}/analyze`;
-      const response = await callApi(endpoint, "POST", test.input, {
-        "X-Tekimax-User-Id": DEMO_USER_ID,
+      const request = { ...(test.input as Record<string, unknown>), user_id: userId };
+      const response = await callApi(endpoint, "POST", request, {
+        "X-Tekimax-User-Id": userId,
         "X-Internal-Service-Token": DEMO_TOKEN,
       });
-      record(test, endpoint, test.input, response, response.ok);
+      record(test, endpoint, { bootstrap, analyze: request }, response, response.ok);
       return;
     }
 
