@@ -17,6 +17,8 @@ class Settings(BaseSettings):
 
     # Demo mode — bypass DB with realistic mock data
     use_mock_data: bool = False
+    allow_insecure_user_header: bool = True
+    internal_service_token: str = ""
 
     log_level: str = "INFO"
 

@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/your-org/ledger-engine/internal/security"
 )
 
 type User struct {
@@ -35,13 +37,29 @@ func (m *UserModel) Insert(ctx context.Context, email, status string) (*User, er
 	}()
 
 	const q = `
-		INSERT INTO users (id, email, status)
-		VALUES ($1, $2, $3)
+		INSERT INTO users (id, email, email_encrypted, email_hash, email_key_id, status)
+		VALUES ($1, NULL, $2, $3, $4, $5)
 		RETURNING created_at
 	`
 
+	sealedEmail, emailHash, keyID, err := security.DefaultPIIProtector().SealEmail(ctx, email)
+	if err != nil {
+		return nil, err
+	}
+
 	var createdAt time.Time
-	if err = tx.QueryRowContext(ctx, q, id, email, status).Scan(&createdAt); err != nil {
+	if err = tx.QueryRowContext(ctx, q, id, sealedEmail, emailHash, keyID, status).Scan(&createdAt); err != nil {
+		return nil, err
+	}
+
+	auditModel := &AuditLogModel{DB: m.DB}
+	if err = auditModel.InsertTx(ctx, tx, &AuditLog{
+		UserID:       &id,
+		ActorEmail:   email,
+		Action:       "user.created",
+		ResourceType: "user",
+		ResourceID:   id.String(),
+	}); err != nil {
 		return nil, err
 	}
 
@@ -67,15 +85,18 @@ func (m *UserModel) GetByID(ctx context.Context, id uuid.UUID) (*User, error) {
 	}()
 
 	const q = `
-		SELECT id, email, status, created_at
+		SELECT id, email, email_encrypted, status, created_at
 		FROM users
 		WHERE id = $1
 	`
 
 	var u User
+	var legacyEmail sql.NullString
+	var encryptedEmail sql.NullString
 	if err := tx.QueryRowContext(ctx, q, id).Scan(
 		&u.ID,
-		&u.Email,
+		&legacyEmail,
+		&encryptedEmail,
 		&u.Status,
 		&u.CreatedAt,
 	); err != nil {
@@ -85,8 +106,17 @@ func (m *UserModel) GetByID(ctx context.Context, id uuid.UUID) (*User, error) {
 		return nil, err
 	}
 
+	u.Email, err = resolveStoredEmail(ctx, legacyEmail, encryptedEmail)
+	if err != nil {
+		return nil, err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return nil, err
+	}
+
+	if legacyEmail.Valid && (!encryptedEmail.Valid || encryptedEmail.String == "") {
+		_ = m.backfillEncryptedEmail(ctx, u.ID, legacyEmail.String)
 	}
 
 	return &u, nil
@@ -102,15 +132,20 @@ func (m *UserModel) GetByEmail(ctx context.Context, email string) (*User, error)
 	}()
 
 	const q = `
-		SELECT id, email, status, created_at
+		SELECT id, email, email_encrypted, status, created_at
 		FROM users
-		WHERE email = $1
+		WHERE email_hash = $1 OR lower(email) = lower($2)
+		ORDER BY CASE WHEN email_hash = $1 THEN 0 ELSE 1 END
+		LIMIT 1
 	`
 
 	var u User
-	if err := tx.QueryRowContext(ctx, q, email).Scan(
+	var legacyEmail sql.NullString
+	var encryptedEmail sql.NullString
+	if err := tx.QueryRowContext(ctx, q, security.HashEmail(email), email).Scan(
 		&u.ID,
-		&u.Email,
+		&legacyEmail,
+		&encryptedEmail,
 		&u.Status,
 		&u.CreatedAt,
 	); err != nil {
@@ -120,9 +155,46 @@ func (m *UserModel) GetByEmail(ctx context.Context, email string) (*User, error)
 		return nil, err
 	}
 
+	u.Email, err = resolveStoredEmail(ctx, legacyEmail, encryptedEmail)
+	if err != nil {
+		return nil, err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 
+	if legacyEmail.Valid && (!encryptedEmail.Valid || encryptedEmail.String == "") {
+		_ = m.backfillEncryptedEmail(ctx, u.ID, legacyEmail.String)
+	}
+
 	return &u, nil
+}
+
+func resolveStoredEmail(ctx context.Context, legacyEmail sql.NullString, encryptedEmail sql.NullString) (string, error) {
+	if encryptedEmail.Valid && encryptedEmail.String != "" {
+		return security.DefaultPIIProtector().OpenEmail(ctx, encryptedEmail.String)
+	}
+	if legacyEmail.Valid {
+		return legacyEmail.String, nil
+	}
+	return "", nil
+}
+
+func (m *UserModel) backfillEncryptedEmail(ctx context.Context, id uuid.UUID, email string) error {
+	sealedEmail, emailHash, keyID, err := security.DefaultPIIProtector().SealEmail(ctx, email)
+	if err != nil {
+		return err
+	}
+
+	_, err = m.DB.ExecContext(ctx, `
+		UPDATE users
+		SET email = NULL,
+		    email_encrypted = $1,
+		    email_hash = $2,
+		    email_key_id = $3
+		WHERE id = $4
+		  AND (email_encrypted IS NULL OR email_encrypted = '')
+	`, sealedEmail, emailHash, keyID, id)
+	return err
 }

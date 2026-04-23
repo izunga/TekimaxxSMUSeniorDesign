@@ -51,7 +51,7 @@
 // ============================================================
 
 import { Request, Response } from "express";
-import { verifyWebhookSignature } from "../services/stripe.service";
+import { isStripeConfigured, verifyWebhookSignature } from "../services/stripe.service";
 import {
   isSupportedEvent,
   normalizeStripeEvent,
@@ -60,15 +60,33 @@ import { postToLedger } from "../services/ledger.service";
 import { IEventRepository } from "../types";
 import { eventBus } from "../services/event-bus";
 
+export type WebhookDeps = {
+  isStripeConfigured: () => boolean;
+  verifyWebhookSignature: typeof verifyWebhookSignature;
+  postToLedger: typeof postToLedger;
+};
+
+export const defaultWebhookDeps: WebhookDeps = {
+  isStripeConfigured,
+  verifyWebhookSignature,
+  postToLedger,
+};
+
 // This function creates the webhook handler. We use a "factory"
 // pattern so we can pass in the event repository — this is called
 // "dependency injection" and it makes the code easy to test and
 // easy to swap storage backends.
-export function createWebhookHandler(repo: IEventRepository) {
+export function createWebhookHandler(repo: IEventRepository, deps: WebhookDeps = defaultWebhookDeps) {
   return async function handleWebhook(
     req: Request,
     res: Response
   ): Promise<void> {
+    if (!deps.isStripeConfigured()) {
+      res.status(503).json({
+        error: "Stripe webhook handling is disabled because Stripe is not configured",
+      });
+      return;
+    }
 
     // ── STEP 1: Verify the signature ──────────────────────────
     // Every Stripe webhook includes a "stripe-signature" header.
@@ -87,9 +105,9 @@ export function createWebhookHandler(repo: IEventRepository) {
     // If the signature is invalid, Stripe's SDK throws an error.
     let event;
     try {
-      event = verifyWebhookSignature(req.body as Buffer, signature);
+      event = deps.verifyWebhookSignature(req.body as Buffer, signature);
     } catch (err) {
-      console.warn("[Webhook] Signature verification failed:", err);
+      console.warn("[Webhook] Signature verification failed");
       res.status(400).json({ error: "Invalid signature" });
       return;
     }
@@ -150,7 +168,7 @@ export function createWebhookHandler(repo: IEventRepository) {
 
       // Record the financial transaction in the ledger
       // (double-entry bookkeeping).
-      await postToLedger(transaction);
+      await deps.postToLedger(transaction);
 
       // Mark the event as successfully processed.
       await repo.markEventPosted(event.id);

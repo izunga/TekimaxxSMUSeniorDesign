@@ -1,0 +1,71 @@
+name: ci-security
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  go-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: user
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: ledger
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U user -d ledger"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - run: go test ./internal/security ./internal/handlers ./internal/models ./internal/ledger
+        env:
+          TEST_DATABASE_URL: postgresql://user:password@localhost:5432/ledger?sslmode=disable
+          SESSION_COOKIE_SECRET: supersecurestringthatisatleast32characterslong
+          KMS_MASTER_KEY_B64: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+          KMS_KEY_ID: env-kms-v1
+
+  python-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [forecast-service, llm-service]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+        working-directory: ${{ matrix.service }}
+      - run: pytest
+        working-directory: ${{ matrix.service }}
+
+  webhook-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm ci
+        working-directory: webhook-handler
+      - run: npm test
+        working-directory: webhook-handler
+
+  trivy-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL

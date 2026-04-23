@@ -14,6 +14,8 @@ class Settings(BaseSettings):
 
     # Forecast service URL — used by Gamma Router for numeric queries
     forecast_service_url: str = "http://forecast-service:8001"
+    allow_insecure_user_header: bool = True
+    internal_service_token: str = ""
 
     log_level: str = "INFO"
 

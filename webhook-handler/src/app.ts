@@ -9,16 +9,28 @@ import path from "path";
 import express from "express";
 import { createWebhookHandler } from "./controllers/webhook.controller";
 import { createDashboardRouter } from "./controllers/dashboard.controller";
+import { config, isStripeExpected } from "./config";
+import { FileEventRepository } from "./repositories/file-event.repository";
 import { InMemoryEventRepository } from "./repositories/event.repository";
+import { IEventRepository } from "./types";
+import { defaultWebhookDeps, WebhookDeps } from "./controllers/webhook.controller";
 
-export function createApp(): express.Application {
+type CreateAppOptions = {
+  eventRepo?: IEventRepository;
+  webhookDeps?: WebhookDeps;
+};
+
+export function createApp(options: CreateAppOptions = {}): express.Application {
   const app = express();
 
   // Create our event storage. Right now it's an in-memory Map,
   // but because it implements the IEventRepository interface,
   // we could swap it for a PostgreSQL-backed version later
   // without changing any other code.
-  const eventRepo = new InMemoryEventRepository();
+  const eventRepo = options.eventRepo ?? (config.events.storePath
+    ? new FileEventRepository(config.events.storePath)
+    : new InMemoryEventRepository());
+  const webhookDeps = options.webhookDeps ?? defaultWebhookDeps;
 
   // ── Stripe Webhook Route ──────────────────────────────────
   //
@@ -38,12 +50,12 @@ export function createApp(): express.Application {
   // rest of the app can still use normal JSON parsing.
   app.post(
     "/stripe/webhook",
-    express.raw({ type: "application/json" }),
-    createWebhookHandler(eventRepo)
+    express.raw({ type: "application/json", limit: config.http.bodyLimit }),
+    createWebhookHandler(eventRepo, webhookDeps)
   );
 
   // For all other routes, parse JSON request bodies normally.
-  app.use(express.json());
+  app.use(express.json({ limit: config.http.bodyLimit }));
 
   // ── Dashboard API + Real-time Stream ──────────────────────
   // Mounts the /api/events, /api/ledger, and /api/stream routes
@@ -62,7 +74,22 @@ export function createApp(): express.Application {
   // Simple health check endpoint — useful for monitoring tools
   // to verify the server is alive.
   app.get("/health", (_req, res) => {
-    res.json({ status: "ok" });
+    res.json({
+      status: "ok",
+      stripe_configured: webhookDeps.isStripeConfigured(),
+      stripe_expected: isStripeExpected(),
+    });
+  });
+
+  app.get("/ready", (_req, res) => {
+    if (isStripeExpected() && !webhookDeps.isStripeConfigured()) {
+      res.status(503).json({
+        status: "degraded",
+        reason: "stripe-not-configured",
+      });
+      return;
+    }
+    res.json({ status: "ready" });
   });
 
   return app;

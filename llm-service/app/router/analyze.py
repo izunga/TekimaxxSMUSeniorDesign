@@ -7,22 +7,18 @@ from __future__ import annotations
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends
+from fastapi.responses import JSONResponse
 
+from app.auth import require_user_id
 from app.config import Settings, get_settings
 from app.models.requests import AnalyzeRequest
 from app.models.responses import AnalyzeResponse, ErrorResponse
 from app.services.gamma_router import GammaRouter
+from app.services.guardrails import GuardrailViolation
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/analyze", tags=["analyze"])
-
-
-def _require_user(x_tekimax_user_id: str = Header(..., alias="X-Tekimax-User-Id")) -> str:
-    if not x_tekimax_user_id.strip():
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
-                            detail="Missing authenticated user identity")
-    return x_tekimax_user_id.strip()
 
 
 @router.post(
@@ -37,7 +33,7 @@ def _require_user(x_tekimax_user_id: str = Header(..., alias="X-Tekimax-User-Id"
 )
 async def analyze_endpoint(
     body: AnalyzeRequest,
-    user_id: str = Depends(_require_user),
+    user_id: str = Depends(require_user_id),
     settings: Settings = Depends(get_settings),
 ) -> AnalyzeResponse:
     request_id = str(uuid.uuid4())
@@ -45,4 +41,13 @@ async def analyze_endpoint(
     logger.info("analyze request_id=%s", request_id)
 
     gamma = GammaRouter(settings)
-    return await gamma.route(user_id=user_id, question=body.question, request_id=request_id)
+    try:
+        return await gamma.route(user_id=user_id, question=body.question, request_id=request_id)
+    except GuardrailViolation:
+        return JSONResponse(
+            status_code=500,
+            content=ErrorResponse(
+                error="guardrail_violation",
+                detail="The generated response violated compliance safeguards.",
+            ).model_dump(),
+        )

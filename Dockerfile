@@ -13,9 +13,12 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /ledger-engine ./cmd/api
 FROM alpine:3.19
 
 RUN apk add --no-cache ca-certificates tzdata
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
 WORKDIR /app
 COPY --from=builder /ledger-engine .
+COPY migrations ./migrations
 
+USER appuser
 EXPOSE 8080
 CMD ["./ledger-engine"]

@@ -8,8 +8,9 @@ import logging
 import uuid
 
 from dateutil.relativedelta import relativedelta
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends
 
+from app.auth import require_user_id
 from app.config import Settings, get_settings
 from app.models.requests import WhatIfRequest
 from app.models.responses import ErrorResponse, WhatIfPeriod, WhatIfResponse
@@ -17,13 +18,6 @@ from app.services import data_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/what-if", tags=["what-if"])
-
-
-def _require_user(x_tekimax_user_id: str = Header(..., alias="X-Tekimax-User-Id")) -> str:
-    if not x_tekimax_user_id.strip():
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
-                            detail="Missing authenticated user identity")
-    return x_tekimax_user_id.strip()
 
 
 @router.post(
@@ -38,7 +32,7 @@ def _require_user(x_tekimax_user_id: str = Header(..., alias="X-Tekimax-User-Id"
 )
 async def whatif_endpoint(
     body: WhatIfRequest,
-    user_id: str = Depends(_require_user),
+    user_id: str = Depends(require_user_id),
     settings: Settings = Depends(get_settings),
 ) -> WhatIfResponse:
     request_id = str(uuid.uuid4())

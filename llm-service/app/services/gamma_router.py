@@ -35,6 +35,7 @@ class RouteDecision(str, Enum):
 # Numeric / data-lookup patterns → route to forecast-service
 _FORECAST_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
     r"\b(what('?s| is))\b.{0,40}\b(revenue|income|expenses?|profit|loss|balance)\b",
+    r"\bwhat are\b.{0,40}\b(revenue|income|expenses?|profit|loss|balance)\b",
     r"\b(show|get|give|tell)\b.{0,30}\b(revenue|income|expenses?|profit|loss|balance)\b",
     r"\bhow much\b.{0,30}\b(have i|did i|i)\b.{0,20}\b(make|earn|spend|receive|pay)\b",
     r"\b(forecast|predict|project)\b.{0,30}\b(revenue|income|expenses?|profit)\b",
@@ -110,11 +111,14 @@ class GammaRouter:
         data_context = None
         answer = ""
         try:
+            headers = {"X-Tekimax-User-Id": user_id}
+            if self.settings.internal_service_token:
+                headers["X-Internal-Service-Token"] = self.settings.internal_service_token
             async with httpx.AsyncClient(timeout=15.0) as client:
                 resp = await client.post(
                     f"{self.settings.forecast_service_url}/forecast",
                     json=payload,
-                    headers={"X-Tekimax-User-Id": user_id},
+                    headers=headers,
                 )
                 resp.raise_for_status()
                 data = resp.json()
@@ -169,7 +173,8 @@ class GammaRouter:
                 guardrail_passed=True,
             )
         except GuardrailViolation as exc:
-            raise   # propagate — endpoint's global handler returns 500
+            logger.error("gamma_router: guardrail violation request_id=%s", request_id)
+            raise
         except (OllamaUnavailableError, OllamaModelError) as exc:
             logger.warning("gamma_router: LLM unavailable (%s) — degraded response", exc)
             return AnalyzeResponse(
