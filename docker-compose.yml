@@ -76,6 +76,8 @@ services:
     build: ./forecast-service
     restart: unless-stopped
     init: true
+    ports:
+      - "8001:8001"
     environment:
       DATABASE_URL: postgresql+asyncpg://user:password@postgres:5432/ledger
       USE_MOCK_DATA: ${USE_MOCK_DATA:-false}
@@ -97,6 +99,8 @@ services:
     build: ./llm-service
     restart: unless-stopped
     init: true
+    ports:
+      - "8002:8002"
     environment:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-granite3.3:8b}
