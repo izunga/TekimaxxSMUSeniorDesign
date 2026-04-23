@@ -1,7 +1,14 @@
-FROM python:3.10-slim
+FROM node:20-slim
 
 WORKDIR /app
 
-COPY . .
+COPY package*.json ./
+RUN npm ci
 
-CMD ["python", "main.py"]
+COPY tsconfig.json ./
+COPY src/ ./src/
+
+RUN npx tsc
+
+EXPOSE 3001
+CMD ["node", "dist/index.js"]

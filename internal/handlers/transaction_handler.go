@@ -251,22 +251,21 @@ func (h *Handler) AuthLogin(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) AuthCallback(w http.ResponseWriter, r *http.Request) {
 	log.Println("🔥 HIT AUTH CALLBACK")
 
-	sessionID := r.URL.Query().Get("session")
-	if sessionID == "" {
-		log.Println("❌ missing session")
-		http.Error(w, "missing session", http.StatusBadRequest)
+	code := r.URL.Query().Get("code")
+	if code == "" {
+		log.Println("❌ missing code")
+		http.Error(w, "missing code", http.StatusBadRequest)
 		return
 	}
 
-	userID, email, err := h.AuthProvider.FetchSession(sessionID)
-	log.Println("User email:", email)
+	accessToken, err := h.AuthProvider.ExchangeCode(r.Context(), code)
 	if err != nil {
-		log.Printf("❌ FetchSession error: %v", err)
-		http.Error(w, "could not fetch user session", http.StatusUnauthorized)
+		log.Printf("❌ ExchangeCode error: %v", err)
+		http.Error(w, "could not exchange authorization code", http.StatusUnauthorized)
 		return
 	}
 
-	sessionCookie, err := h.AuthProvider.EncodeSession(userID, 24*time.Hour)
+	sessionCookie, err := h.AuthProvider.EncodeSession(accessToken, 24*time.Hour)
 	if err != nil {
 		http.Error(w, "could not generate session cookie", http.StatusInternalServerError)
 		return
