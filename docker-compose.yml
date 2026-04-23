@@ -2,34 +2,68 @@ version: '3.9'
 
 services:
 
-  api-gateway:
-    build: ./api-gateway
-    ports:
-      - "8000:8000"
-    networks:
-      - backend
-
   webhook-handler:
     build: ./webhook-handler
     ports:
-      - "8001:8001"
+      - "3001:3001"
+    environment:
+      PORT: 3001
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
+      LEDGER_ENGINE_URL: http://ledger-engine:8080
+      LEDGER_SERVICE_TOKEN: ${LEDGER_SERVICE_TOKEN:-}
+      LEDGER_STRIPE_BALANCE_ACCOUNT_ID: ${LEDGER_STRIPE_BALANCE_ACCOUNT_ID:-}
+      LEDGER_REVENUE_ACCOUNT_ID: ${LEDGER_REVENUE_ACCOUNT_ID:-}
+      LEDGER_CONTRA_REVENUE_ACCOUNT_ID: ${LEDGER_CONTRA_REVENUE_ACCOUNT_ID:-}
     networks:
       - backend
+    depends_on:
+      - ledger-engine
 
   ledger-engine:
-    build: ./ledger-engine
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgresql://user:password@postgres:5432/ledger
+      ADDR: :8080
+      WORKOS_CLIENT_ID: ${WORKOS_CLIENT_ID}
+      WORKOS_API_KEY: ${WORKOS_API_KEY}
+      WORKOS_REDIRECT_URI: ${WORKOS_REDIRECT_URI}
+      WORKOS_POST_LOGIN_REDIRECT: ${WORKOS_POST_LOGIN_REDIRECT:-/}
+      SESSION_COOKIE_SECRET: ${SESSION_COOKIE_SECRET}
     networks:
       - backend
+    depends_on:
+      - postgres
 
   forecast-service:
     build: ./forecast-service
+    environment:
+      DATABASE_URL: postgresql+asyncpg://user:password@postgres:5432/ledger
+      USE_MOCK_DATA: ${USE_MOCK_DATA:-false}
+      FORECAST_PERIODS: ${FORECAST_PERIODS:-3}
+      MOVING_AVG_WINDOW: ${MOVING_AVG_WINDOW:-3}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     networks:
       - backend
+    depends_on:
+      - postgres
 
   llm-service:
     build: ./llm-service
+    environment:
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-granite3.3:8b}
+      OLLAMA_TIMEOUT_SECONDS: ${OLLAMA_TIMEOUT_SECONDS:-60}
+      FORECAST_SERVICE_URL: http://forecast-service:8001
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - backend
+    depends_on:
+      - forecast-service
 
   rust-crypto:
     build: ./rust-crypto
@@ -44,6 +78,9 @@ services:
       POSTGRES_DB: ledger
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
     networks:
       - backend
 

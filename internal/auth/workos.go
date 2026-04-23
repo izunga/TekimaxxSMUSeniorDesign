@@ -98,16 +98,6 @@ func NewWorkOSAuth() *WorkOSAuth {
 	}
 }
 
-func (w *WorkOSAuth) FetchSession(sessionID string) (string, string, error) {
-	// For now (MVP), fake it so your flow works
-
-	// In real implementation, you'd call WorkOS API:
-	// https://api.workos.com/user_management/sessions/{id}
-
-	// TEMP: return dummy user
-	return sessionID, "test@example.com", nil
-}
-
 func (a *WorkOSAuth) ConfigWarnings() []string {
 	// Surface misconfiguration early at startup without hard-failing local development.
 	warnings := make([]string, 0, 6)

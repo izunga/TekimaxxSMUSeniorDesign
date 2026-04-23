@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     debug: bool = False
 
     # IBM Granite via Ollama — no cloud LLMs (compliance)
-    ollama_base_url: str = "http://localhost:11434"
+    ollama_base_url: str = "http://host.docker.internal:11434"
     ollama_model: str = "granite3.3:8b"
     ollama_timeout_seconds: int = 60
 

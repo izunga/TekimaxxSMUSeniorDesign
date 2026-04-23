@@ -16,8 +16,8 @@ dotenv.config();
 // "as const" makes TypeScript treat these as literal types,
 // preventing accidental reassignment.
 export const config = {
-  // Which port the Express server listens on (defaults to 3000).
-  port: parseInt(process.env.PORT || "3000", 10),
+  // Which port the Express server listens on (defaults to 3001).
+  port: parseInt(process.env.PORT || "3001", 10),
 
   stripe: {
     // The Stripe secret API key (starts with sk_test_ or sk_live_).
@@ -28,6 +28,20 @@ export const config = {
     // Stripe uses this to sign every webhook payload so we can
     // verify the request actually came from Stripe.
     webhookSecret: process.env.STRIPE_WEBHOOK_SECRET || "",
+  },
+
+  ledger: {
+    // Base URL of the Go ledger engine. Set via LEDGER_ENGINE_URL in docker-compose.
+    engineUrl: process.env.LEDGER_ENGINE_URL || "http://ledger-engine:8080",
+
+    // Bearer token for service-to-service calls to the ledger engine.
+    serviceToken: process.env.LEDGER_SERVICE_TOKEN || "",
+
+    // Account UUIDs in the ledger DB. Must be created first via POST /accounts.
+    // Leave empty to skip DB persistence (dashboard will still show in-memory entries).
+    stripeBalanceAccountId: process.env.LEDGER_STRIPE_BALANCE_ACCOUNT_ID || "",
+    revenueAccountId: process.env.LEDGER_REVENUE_ACCOUNT_ID || "",
+    contraRevenueAccountId: process.env.LEDGER_CONTRA_REVENUE_ACCOUNT_ID || "",
   },
 } as const;
 

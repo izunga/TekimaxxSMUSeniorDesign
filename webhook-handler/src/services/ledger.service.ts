@@ -29,6 +29,7 @@
 
 import { NormalizedTransaction } from "../types";
 import { eventBus, LedgerEntry } from "./event-bus";
+import { config } from "../config";
 
 // In-memory list of all ledger journal entries.
 // The dashboard reads from this to display the journal.
@@ -83,8 +84,48 @@ export async function postToLedger(tx: NormalizedTransaction): Promise<void> {
   // a real-time update via Server-Sent Events.
   eventBus.emit("ledgerEntry", entry);
 
-  // In production, this is where you'd INSERT into a
-  // journal_entries database table.
+  // Persist to the Go ledger engine if account IDs are configured.
+  // Without account IDs the in-memory store above is the only record.
+  await persistToLedgerEngine(tx);
+}
+
+// Attempts an HTTP POST to the Go ledger engine's POST /transactions endpoint.
+// Requires LEDGER_SERVICE_TOKEN and the three account ID env vars to be set.
+// Fails gracefully — a failed call is logged but never throws.
+async function persistToLedgerEngine(tx: NormalizedTransaction): Promise<void> {
+  const { engineUrl, serviceToken, stripeBalanceAccountId, revenueAccountId, contraRevenueAccountId } = config.ledger;
+
+  if (!serviceToken || !stripeBalanceAccountId || !revenueAccountId || !contraRevenueAccountId) {
+    // Not fully configured — skip silently. Set the four env vars to enable persistence.
+    return;
+  }
+
+  const debitAccountId  = tx.direction === "INFLOW" ? stripeBalanceAccountId : contraRevenueAccountId;
+  const creditAccountId = tx.direction === "INFLOW" ? revenueAccountId       : stripeBalanceAccountId;
+
+  try {
+    const res = await fetch(`${engineUrl}/transactions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${serviceToken}`,
+      },
+      body: JSON.stringify({
+        source: "stripe",
+        external_reference: tx.stripeEventId,
+        description: `${tx.type} ${tx.stripeObjectId}`,
+        lines: [
+          { account_id: debitAccountId,  debit: tx.amount, credit: 0 },
+          { account_id: creditAccountId, debit: 0,         credit: tx.amount },
+        ],
+      }),
+    });
+    if (!res.ok) {
+      console.error(`[Ledger] Ledger engine rejected transaction ${tx.stripeEventId}: HTTP ${res.status}`);
+    }
+  } catch (err) {
+    console.error(`[Ledger] Failed to reach ledger engine for ${tx.stripeEventId}:`, err);
+  }
 }
 
 // Returns a copy of all ledger entries (used by the dashboard API).
