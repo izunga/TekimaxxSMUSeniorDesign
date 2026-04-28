@@ -1,4 +1,5 @@
 services:
+<<<<<<< Updated upstream
 
   webhook-handler:
     build: ./webhook-handler
@@ -111,6 +112,33 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+=======
+  ledger-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ledger-engine
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+    networks:
+      - backend
+
+  webhook-handler:
+    build:
+      context: ./webhook-handler
+      dockerfile: Dockerfile
+    container_name: webhook-handler
+    ports:
+      - "3000:3000"
+    env_file:
+      - ./webhook-handler/.env
+    depends_on:
+      - ledger-engine
+>>>>>>> Stashed changes
     networks:
       - backend
     depends_on:
@@ -121,10 +149,17 @@ services:
       - /tmp
 
   rust-crypto:
+<<<<<<< Updated upstream
     build: ./rust-crypto
     restart: unless-stopped
     init: true
     command: ["sh", "-c", "sleep infinity"]
+=======
+    build:
+      context: ./rust-crypto
+      dockerfile: Dockerfile
+    container_name: rust-crypto
+>>>>>>> Stashed changes
     networks:
       - backend
     read_only: true
@@ -133,11 +168,17 @@ services:
 
   postgres:
     image: postgres:15
+<<<<<<< Updated upstream
     restart: unless-stopped
+=======
+    container_name: postgres
+>>>>>>> Stashed changes
     environment:
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: ledger
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ledger_engine
+    ports:
+      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./migrations:/docker-entrypoint-initdb.d
@@ -145,12 +186,17 @@ services:
       - "5432:5432"
     networks:
       - backend
+<<<<<<< Updated upstream
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-user} -d ${POSTGRES_DB:-ledger}"]
       interval: 5s
       timeout: 5s
       retries: 12
       start_period: 10s
+=======
+    restart: always
+
+>>>>>>> Stashed changes
 
 networks:
   backend:
