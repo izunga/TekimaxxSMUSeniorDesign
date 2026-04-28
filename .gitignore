@@ -11,3 +11,5 @@ dist
 demo-dashboard/.next
 __pycache__
 *.pyc
+.env
+demo-dashboard/.env.local
